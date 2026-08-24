@@ -1,0 +1,109 @@
+name: SupplyChain Sentinel Gate
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write   # required for Cosign keyless signing (OIDC)
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-scan-sign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+      - name: Install Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: json
+          output: trivy-report.json
+          exit-code: 0
+
+      - name: Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: cyclonedx
+          output: sbom.json
+          exit-code: 0
+
+      - name: Push image to GHCR
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless)
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} | cut -d@ -f2)
+
+      - name: Verify signature
+        id: verify
+        run: |
+          if cosign verify ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --certificate-identity-regexp ".*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build CI summary payload
+        id: payload
+        run: |
+          python3 -c "
+          import json
+          trivy = json.load(open('trivy-report.json'))
+          summary = {
+            'image': '${{ env.IMAGE_NAME }}',
+            'tag': '${{ github.sha }}',
+            'commit': '${{ github.sha }}',
+            'branch': '${{ github.ref_name }}',
+            'environment': 'production' if '${{ github.ref_name }}' == 'main' else 'development',
+            'sbom_present': True,
+            'signature_verified': ${{ steps.verify.outputs.signed }},
+            'trivy_summary': trivy
+          }
+          with open('summary.json', 'w') as f:
+              json.dump(summary, f)
+          "
+
+      - name: Query SupplyChainSentinel gate
+        id: gate
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.N8N_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d @summary.json)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "verdict=$(echo "$BODY" | jq -r '.verdict')" >> "$GITHUB_OUTPUT"
+          echo "reason=$(echo "$BODY" | jq -r '.reason')" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce gate decision
+        run: |
+          VERDICT="${{ steps.gate.outputs.verdict }}"
+          REASON="${{ steps.gate.outputs.reason }}"
+          echo "Gate verdict: $VERDICT — $REASON"
+          if [ "$VERDICT" = "BLOCK" ] || [ "$VERDICT" = "QUARANTINE" ]; then
+            echo "::error::Deployment gate failed — $REASON"
+            exit 1
+          fi
