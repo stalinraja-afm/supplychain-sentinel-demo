@@ -7,4 +7,3 @@ RUN echo 'console.log("SupplyChainSentinel Demo App Running");' > index.js
 
 EXPOSE 3000
 CMD ["node", "index.js"]
-EOF
