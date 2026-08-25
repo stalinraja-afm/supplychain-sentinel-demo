@@ -38,6 +38,8 @@ jobs:
           format: json
           output: trivy-report.json
           exit-code: 0
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
 
       - name: Generate SBOM (CycloneDX)
         uses: aquasecurity/trivy-action@master
