@@ -41,6 +41,10 @@ jobs:
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
 
+       - name: Show Trivy findings
+         run: |
+          jq -r '.Results[].Vulnerabilities[]? | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName)\t\(.InstalledVersion)\t\(.FixedVersion)"' trivy-report.json
+
       - name: Generate SBOM (CycloneDX)
         uses: aquasecurity/trivy-action@master
         with:
