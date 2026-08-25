@@ -91,7 +91,7 @@ jobs:
       - name: Query SupplyChainSentinel gate
         id: gate
         run: |
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.N8N_WEBHOOK_URL }}" \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.https://s22.n8n.alexaiautomations.com/webhook/supplychain-gate }}" \
             -H "Content-Type: application/json" \
             -d @summary.json)
           BODY=$(echo "$RESPONSE" | head -n -1)
