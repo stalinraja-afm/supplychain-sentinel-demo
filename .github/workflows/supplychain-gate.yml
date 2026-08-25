@@ -82,7 +82,7 @@ jobs:
             'branch': '${{ github.ref_name }}',
             'environment': 'production' if '${{ github.ref_name }}' == 'main' else 'development',
             'sbom_present': os.path.exists('sbom.json'),
-            ''signature_verified': '${{ steps.verify.outputs.signed }}' == 'true',
+            'signature_verified': '${{ steps.verify.outputs.signed }}' == 'true',
             'trivy_summary': trivy
           }
           with open('summary.json', 'w') as f:
